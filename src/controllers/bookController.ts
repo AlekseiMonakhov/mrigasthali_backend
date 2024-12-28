@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import path from 'path';
 import { STORAGE_PATH, getFilesFromDir } from '../utils/fileUtils';
 
-export async function getBooks(req: Request, res: Response) {
+export async function getBooks(_req: Request, res: Response) {
     const dirPath = path.join(STORAGE_PATH, 'books', 'pdf');
 
     try {
