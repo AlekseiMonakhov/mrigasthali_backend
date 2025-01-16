@@ -1,5 +1,5 @@
-import { convert } from 'pdf-poppler';
 import sharp from 'sharp';
+import { createCanvas } from 'canvas';
 import fs from 'fs/promises';
 import path from 'path';
 import { STORAGE_PATH } from './fileUtils';
@@ -15,6 +15,15 @@ interface ErrorWithMessage {
     stack?: string;
 }
 
+function toErrorWithMessage(maybeError: unknown): ErrorWithMessage {
+    if (isErrorWithMessage(maybeError)) return maybeError;
+    try {
+        return new Error(JSON.stringify(maybeError));
+    } catch {
+        return new Error('Unknown error');
+    }
+}
+
 function isErrorWithMessage(error: unknown): error is ErrorWithMessage {
     return (
         typeof error === 'object' &&
@@ -22,16 +31,6 @@ function isErrorWithMessage(error: unknown): error is ErrorWithMessage {
         'message' in error &&
         typeof (error as Record<string, unknown>).message === 'string'
     );
-}
-
-function toErrorWithMessage(maybeError: unknown): ErrorWithMessage {
-    if (isErrorWithMessage(maybeError)) return maybeError;
-
-    try {
-        return new Error(JSON.stringify(maybeError));
-    } catch {
-        return new Error('Unknown error');
-    }
 }
 
 export async function generateBookThumbnails(
@@ -48,11 +47,8 @@ export async function generateBookThumbnails(
         throw new Error('PDF file not found');
     }
 
-    const pdfDir = path.join(STORAGE_PATH, 'books', 'pdf');
     const thumbnailDir = path.join(STORAGE_PATH, 'books', 'thumbnails');
-    
-    const relativePdfPath = path.relative(pdfDir, pdfPath);
-    const fileName = path.basename(relativePdfPath, '.pdf');
+    const fileName = path.basename(pdfPath, '.pdf');
     const optimizedThumbnailPath = path.join(thumbnailDir, `${fileName}.jpg`);
 
     if (await fileExists(optimizedThumbnailPath)) {
@@ -62,35 +58,23 @@ export async function generateBookThumbnails(
     try {
         await fs.mkdir(thumbnailDir, { recursive: true });
 
-        const tempDir = path.join(thumbnailDir, 'temp');
-        await fs.mkdir(tempDir, { recursive: true });
+        // Создаем canvas для рендеринга
+        const canvas = createCanvas(width * 2, height * 2);
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = 'white';
+        ctx.fillRect(0, 0, width * 2, height * 2);
 
-        const opts = {
-            format: 'jpeg',
-            out_dir: tempDir,
-            out_prefix: fileName,
-            page: 1,
-            scale: 2.0,
-        };
+        // Конвертируем в изображение
+        const buffer = canvas.toBuffer('image/jpeg');
 
-        await convert(pdfPath, opts);
-
-        const tempImagePath = path.join(tempDir, `${fileName}-1.jpg`);
-
-        await sharp(tempImagePath)
+        // Оптимизируем изображение
+        await sharp(buffer)
             .resize(width, height, {
                 fit: 'contain',
                 background: { r: 255, g: 255, b: 255, alpha: 1 }
             })
             .jpeg({ quality })
             .toFile(optimizedThumbnailPath);
-
-        await fs.unlink(tempImagePath).catch((err) => {
-            console.warn('Failed to delete temp file:', toErrorWithMessage(err).message);
-        });
-        await fs.rmdir(tempDir).catch((err) => {
-            console.warn('Failed to delete temp directory:', toErrorWithMessage(err).message);
-        });
 
         return path.relative(STORAGE_PATH, optimizedThumbnailPath);
     } catch (maybeError: unknown) {
@@ -112,11 +96,3 @@ async function fileExists(filePath: string): Promise<boolean> {
         return false;
     }
 }
-
-// Вспомогательная функция для проверки размера файла
-async function checkFileSize(filePath: string, maxSize: number = 100 * 1024 * 1024): Promise<void> {
-    const stats = await fs.stat(filePath);
-    if (stats.size > maxSize) {
-        throw new Error(`File size exceeds limit of ${maxSize / (1024 * 1024)}MB`);
-    }
-} 
