@@ -1,4 +1,3 @@
-import { PDFDocument } from 'pdf-lib';
 import sharp from 'sharp';
 import { fromPath } from 'pdf2pic';
 import fs from 'fs/promises';
