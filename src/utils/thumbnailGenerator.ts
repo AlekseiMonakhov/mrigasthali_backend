@@ -1,5 +1,5 @@
+import { convert } from 'pdf-poppler';
 import sharp from 'sharp';
-import { fromPath } from 'pdf2pic';
 import fs from 'fs/promises';
 import path from 'path';
 import { STORAGE_PATH } from './fileUtils';
@@ -8,6 +8,30 @@ interface ThumbnailOptions {
     width?: number;
     height?: number;
     quality?: number;
+}
+
+interface ErrorWithMessage {
+    message: string;
+    stack?: string;
+}
+
+function isErrorWithMessage(error: unknown): error is ErrorWithMessage {
+    return (
+        typeof error === 'object' &&
+        error !== null &&
+        'message' in error &&
+        typeof (error as Record<string, unknown>).message === 'string'
+    );
+}
+
+function toErrorWithMessage(maybeError: unknown): ErrorWithMessage {
+    if (isErrorWithMessage(maybeError)) return maybeError;
+
+    try {
+        return new Error(JSON.stringify(maybeError));
+    } catch {
+        return new Error('Unknown error');
+    }
 }
 
 export async function generateBookThumbnails(
@@ -20,42 +44,40 @@ export async function generateBookThumbnails(
         quality = 80
     } = options;
 
-    // Проверяем существование PDF файла
     if (!await fileExists(pdfPath)) {
         throw new Error('PDF file not found');
     }
 
-    const thumbnailDir = path.join(STORAGE_PATH, 'thumbnails');
-    const fileName = path.basename(pdfPath, '.pdf');
-    const thumbnailPath = path.join(thumbnailDir, `${fileName}.jpg`);
-    const optimizedThumbnailPath = thumbnailPath.replace('.jpg', '_optimized.jpg');
+    const pdfDir = path.join(STORAGE_PATH, 'books', 'pdf');
+    const thumbnailDir = path.join(STORAGE_PATH, 'books', 'thumbnails');
+    
+    const relativePdfPath = path.relative(pdfDir, pdfPath);
+    const fileName = path.basename(relativePdfPath, '.pdf');
+    const optimizedThumbnailPath = path.join(thumbnailDir, `${fileName}.jpg`);
 
-    // Проверяем существование thumbnail
     if (await fileExists(optimizedThumbnailPath)) {
         return path.relative(STORAGE_PATH, optimizedThumbnailPath);
-    }
-
-    // Проверяем размер файла
-    const stats = await fs.stat(pdfPath);
-    if (stats.size > 100 * 1024 * 1024) { // 100MB
-        throw new Error('PDF file is too large');
     }
 
     try {
         await fs.mkdir(thumbnailDir, { recursive: true });
 
-        const options = {
-            density: 100,
-            saveFilename: fileName,
-            savePath: thumbnailDir,
-            format: "jpg",
-            width
+        const tempDir = path.join(thumbnailDir, 'temp');
+        await fs.mkdir(tempDir, { recursive: true });
+
+        const opts = {
+            format: 'jpeg',
+            out_dir: tempDir,
+            out_prefix: fileName,
+            page: 1,
+            scale: 2.0,
         };
 
-        const convert = fromPath(pdfPath, options);
-        await convert(1);
+        await convert(pdfPath, opts);
 
-        await sharp(thumbnailPath)
+        const tempImagePath = path.join(tempDir, `${fileName}-1.jpg`);
+
+        await sharp(tempImagePath)
             .resize(width, height, {
                 fit: 'contain',
                 background: { r: 255, g: 255, b: 255, alpha: 1 }
@@ -63,13 +85,22 @@ export async function generateBookThumbnails(
             .jpeg({ quality })
             .toFile(optimizedThumbnailPath);
 
-        // Удаляем промежуточный файл
-        await fs.unlink(thumbnailPath);
+        await fs.unlink(tempImagePath).catch((err) => {
+            console.warn('Failed to delete temp file:', toErrorWithMessage(err).message);
+        });
+        await fs.rmdir(tempDir).catch((err) => {
+            console.warn('Failed to delete temp directory:', toErrorWithMessage(err).message);
+        });
 
         return path.relative(STORAGE_PATH, optimizedThumbnailPath);
-    } catch (error) {
-        console.error('Error generating thumbnail:', error);
-        throw new Error('Failed to generate thumbnail');
+    } catch (maybeError: unknown) {
+        const error = toErrorWithMessage(maybeError);
+        console.error('Error generating thumbnail:', {
+            message: error.message,
+            pdfPath,
+            stack: error.stack
+        });
+        throw new Error(`Failed to generate thumbnail: ${error.message}`);
     }
 }
 
@@ -79,5 +110,13 @@ async function fileExists(filePath: string): Promise<boolean> {
         return true;
     } catch {
         return false;
+    }
+}
+
+// Вспомогательная функция для проверки размера файла
+async function checkFileSize(filePath: string, maxSize: number = 100 * 1024 * 1024): Promise<void> {
+    const stats = await fs.stat(filePath);
+    if (stats.size > maxSize) {
+        throw new Error(`File size exceeds limit of ${maxSize / (1024 * 1024)}MB`);
     }
 } 
