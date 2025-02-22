@@ -4,6 +4,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { STORAGE_PATH } from './fileUtils';
 import pdf from 'pdf-parse';
+import * as console from "node:console";
 
 interface ThumbnailOptions {
     width?: number;
@@ -80,6 +81,7 @@ export async function generateBookThumbnails(
 
         // Возвращаем base64
         return `data:image/jpeg;base64,${optimizedBuffer.toString('base64')}`;
+        console.log("return base64")
     } catch (error) {
         console.error('Error generating thumbnail:', error);
         throw new Error('Failed to generate thumbnail');
