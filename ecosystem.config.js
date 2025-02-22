@@ -4,7 +4,8 @@ module.exports = {
     script: "./dist/server.js",
     instances: 1,
     autorestart: true,
-    watch: false,
+    watch: true,
+    ignore_watch: ["logs/*"],
     max_memory_restart: "1G",
     env_production: {
       NODE_ENV: "production",
@@ -15,4 +16,4 @@ module.exports = {
     log_file: "logs/combined.log",
     time: true
   }]
-} 
+}
