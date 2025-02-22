@@ -47,17 +47,7 @@ export async function generateBookThumbnails(
         throw new Error('PDF file not found');
     }
 
-    const thumbnailDir = path.join(STORAGE_PATH, 'books', 'thumbnails');
-    const fileName = path.basename(pdfPath, '.pdf');
-    const optimizedThumbnailPath = path.join(thumbnailDir, `${fileName}.jpg`);
-
-    if (await fileExists(optimizedThumbnailPath)) {
-        return path.relative(STORAGE_PATH, optimizedThumbnailPath);
-    }
-
     try {
-        await fs.mkdir(thumbnailDir, { recursive: true });
-
         // Создаем canvas для рендеринга
         const canvas = createCanvas(width * 2, height * 2);
         const ctx = canvas.getContext('2d');
@@ -67,16 +57,17 @@ export async function generateBookThumbnails(
         // Конвертируем в изображение
         const buffer = canvas.toBuffer('image/jpeg');
 
-        // Оптимизируем изображение
-        await sharp(buffer)
+        // Оптимизируем изображение и получаем буфер
+        const optimizedBuffer = await sharp(buffer)
             .resize(width, height, {
                 fit: 'contain',
                 background: { r: 255, g: 255, b: 255, alpha: 1 }
             })
             .jpeg({ quality })
-            .toFile(optimizedThumbnailPath);
+            .toBuffer();
 
-        return path.relative(STORAGE_PATH, optimizedThumbnailPath);
+        // Конвертируем в base64
+        return `data:image/jpeg;base64,${optimizedBuffer.toString('base64')}`;
     } catch (maybeError: unknown) {
         const error = toErrorWithMessage(maybeError);
         console.error('Error generating thumbnail:', {

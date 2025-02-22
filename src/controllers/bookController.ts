@@ -17,7 +17,7 @@ export async function getBooks(req: Request, res: Response) {
             paginatedFiles.map(async file => {
                 try {
                     const fullPath = path.join(STORAGE_PATH, file.path);
-                    const thumbnail = await generateBookThumbnails(fullPath, {
+                    const thumbnailBase64 = await generateBookThumbnails(fullPath, {
                         width: 200,
                         height: 300,
                         quality: 80
@@ -26,7 +26,7 @@ export async function getBooks(req: Request, res: Response) {
                     return {
                         name: file.name,
                         path: `/files${file.path}`,
-                        thumbnail: `/files/${thumbnail}`,
+                        thumbnail: thumbnailBase64,
                         error: null
                     };
                 } catch (error) {
