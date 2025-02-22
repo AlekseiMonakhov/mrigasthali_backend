@@ -1,17 +1,41 @@
 import sharp from 'sharp';
 import fs from 'fs/promises';
 import path from 'path';
-import { fromPath } from 'pdf2pic';
 import { STORAGE_PATH } from './fileUtils';
+import { createCanvas } from 'canvas';
+
+// Импортируем Legacy версию pdf.js
+const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
+
+// Создаем фабрику для canvas
+class NodeCanvasFactory {
+    create(width: number, height: number) {
+        const canvas = createCanvas(width, height);
+        const context = canvas.getContext('2d');
+
+        return {
+            canvas,
+            context,
+            width,
+            height
+        };
+    }
+
+    reset(canvasAndContext: any, width: number, height: number) {
+        canvasAndContext.canvas.width = width;
+        canvasAndContext.canvas.height = height;
+    }
+
+    destroy(canvasAndContext: any) {
+        // Метод destroy не требуется для node-canvas
+    }
+}
 
 interface ThumbnailOptions {
     width?: number;
     height?: number;
     quality?: number;
 }
-
-
-
 
 export async function generateBookThumbnails(
     pdfPath: string, 
@@ -32,36 +56,34 @@ export async function generateBookThumbnails(
         const pdfFileName = path.basename(pdfPath, '.pdf');
         const thumbnailPath = path.join(STORAGE_PATH, 'books', 'thumbnails', `${pdfFileName}.jpg`);
 
-        let imageBuffer: Buffer;
-
         // Проверяем существует ли уже thumbnail
         if (await fileExists(thumbnailPath)) {
-            // Если существует, читаем его
-            imageBuffer = await fs.readFile(thumbnailPath);
-        } else {
-            // Если нет, генерируем из PDF
-            const baseOptions = {
-                width,
-                height,
-                density: 300,
-                format: "jpeg",
-                preserveAspectRatio: true,
-                saveFilePath: path.join(STORAGE_PATH, 'books', 'thumbnails')
-            };
+            // Возвращаем существующую обложку
+            return `data:image/jpeg;base64,${(await fs.readFile(thumbnailPath)).toString('base64')}`;
+        } 
 
-            // Конвертируем первую страницу PDF в изображение
-            const convert = fromPath(pdfPath, baseOptions);
-            const pageToConvertAsImage = 1;
-            
-            const result = await convert(pageToConvertAsImage);
-            
-            if (!result.path) {
-                throw new Error('Failed to convert PDF to image');
-            }
+        // Загружаем PDF файл
+        const data = await fs.readFile(pdfPath);
+        const loadingTask = pdfjsLib.getDocument({ data });
+        const pdfDocument = await loadingTask.promise;
 
-            // Читаем сгенерированный файл
-            imageBuffer = await fs.readFile(result.path);
-        }
+        // Получаем первую страницу
+        const page = await pdfDocument.getPage(1);
+        const viewport = page.getViewport({ scale: 1.0 });
+
+        // Создаем canvas нужного размера
+        const canvasFactory = new NodeCanvasFactory();
+        const canvasAndContext = canvasFactory.create(viewport.width, viewport.height);
+        const context = canvasAndContext.context;
+
+        // Рендерим страницу на canvas
+        await page.render({
+            canvasContext: context,
+            viewport: viewport
+        }).promise;
+
+        // Получаем данные изображения
+        const imageBuffer = canvasAndContext.canvas.toBuffer();
 
         // Оптимизируем с помощью sharp
         const optimizedBuffer = await sharp(imageBuffer)
@@ -72,11 +94,14 @@ export async function generateBookThumbnails(
             .jpeg({ quality })
             .toBuffer();
 
-        // Возвращаем base64
+        // Сохраняем оптимизированную версию
+        await fs.writeFile(thumbnailPath, optimizedBuffer);
+
+        // Возвращаем base64 сгенерированной обложки
         return `data:image/jpeg;base64,${optimizedBuffer.toString('base64')}`;
     } catch (error) {
         console.error('Error generating thumbnail:', error);
-        throw new Error('Failed to generate thumbnail');
+        throw new Error(`Failed to generate thumbnail: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
 }
 
