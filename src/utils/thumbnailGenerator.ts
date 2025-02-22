@@ -4,10 +4,8 @@ import path from 'path';
 import { STORAGE_PATH } from './fileUtils';
 import { createCanvas } from 'canvas';
 
-// Импортируем Legacy версию pdf.js
 const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
 
-// Создаем фабрику для canvas
 class NodeCanvasFactory {
     create(width: number, height: number) {
         const canvas = createCanvas(width, height);
@@ -27,7 +25,6 @@ class NodeCanvasFactory {
     }
 
     destroy(canvasAndContext: any) {
-        // Метод destroy не требуется для node-canvas
     }
 }
 
@@ -35,6 +32,31 @@ interface ThumbnailOptions {
     width?: number;
     height?: number;
     quality?: number;
+}
+
+async function createFallbackThumbnail(
+    fileName: string,
+    width: number,
+    height: number,
+    quality: number
+): Promise<Buffer> {
+    const canvas = createCanvas(width, height);
+    const ctx = canvas.getContext('2d');
+
+    ctx.fillStyle = 'white';
+    ctx.fillRect(0, 0, width, height);
+
+    ctx.fillStyle = 'black';
+    ctx.font = '16px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    const text = fileName.length > 30 ? fileName.substring(0, 27) + '...' : fileName;
+    ctx.fillText(text, width / 2, height / 2);
+
+    return await sharp(canvas.toBuffer())
+        .jpeg({ quality })
+        .toBuffer();
 }
 
 export async function generateBookThumbnails(
@@ -52,53 +74,49 @@ export async function generateBookThumbnails(
     }
 
     try {
-        // Формируем путь к thumbnail
         const pdfFileName = path.basename(pdfPath, '.pdf');
         const thumbnailPath = path.join(STORAGE_PATH, 'books', 'thumbnails', `${pdfFileName}.jpg`);
 
-        // Проверяем существует ли уже thumbnail
         if (await fileExists(thumbnailPath)) {
-            // Возвращаем существующую обложку
             return `data:image/jpeg;base64,${(await fs.readFile(thumbnailPath)).toString('base64')}`;
         } 
 
-        // Загружаем PDF файл
-        const data = await fs.readFile(pdfPath);
-        const loadingTask = pdfjsLib.getDocument({ data });
-        const pdfDocument = await loadingTask.promise;
+        try {
+            const data = await fs.readFile(pdfPath);
+            const loadingTask = pdfjsLib.getDocument({ data });
+            const pdfDocument = await loadingTask.promise;
 
-        // Получаем первую страницу
-        const page = await pdfDocument.getPage(1);
-        const viewport = page.getViewport({ scale: 1.0 });
+            const page = await pdfDocument.getPage(1);
+            const viewport = page.getViewport({ scale: 1.0 });
 
-        // Создаем canvas нужного размера
-        const canvasFactory = new NodeCanvasFactory();
-        const canvasAndContext = canvasFactory.create(viewport.width, viewport.height);
-        const context = canvasAndContext.context;
+            const canvasFactory = new NodeCanvasFactory();
+            const canvasAndContext = canvasFactory.create(viewport.width, viewport.height);
+            const context = canvasAndContext.context;
 
-        // Рендерим страницу на canvas
-        await page.render({
-            canvasContext: context,
-            viewport: viewport
-        }).promise;
+            await page.render({
+                canvasContext: context,
+                viewport: viewport
+            }).promise;
 
-        // Получаем данные изображения
-        const imageBuffer = canvasAndContext.canvas.toBuffer();
+            const imageBuffer = canvasAndContext.canvas.toBuffer();
 
-        // Оптимизируем с помощью sharp
-        const optimizedBuffer = await sharp(imageBuffer)
-            .resize(width, height, {
-                fit: 'contain',
-                background: { r: 255, g: 255, b: 255, alpha: 1 }
-            })
-            .jpeg({ quality })
-            .toBuffer();
+            const optimizedBuffer = await sharp(imageBuffer)
+                .resize(width, height, {
+                    fit: 'contain',
+                    background: { r: 255, g: 255, b: 255, alpha: 1 }
+                })
+                .jpeg({ quality })
+                .toBuffer();
 
-        // Сохраняем оптимизированную версию
-        await fs.writeFile(thumbnailPath, optimizedBuffer);
+            await fs.writeFile(thumbnailPath, optimizedBuffer);
 
-        // Возвращаем base64 сгенерированной обложки
-        return `data:image/jpeg;base64,${optimizedBuffer.toString('base64')}`;
+            return `data:image/jpeg;base64,${optimizedBuffer.toString('base64')}`;
+        } catch (pdfError) {
+            console.error('Failed to process PDF, creating fallback thumbnail:', pdfError);
+            const fallbackBuffer = await createFallbackThumbnail(pdfFileName, width, height, quality);
+            await fs.writeFile(thumbnailPath, fallbackBuffer);
+            return `data:image/jpeg;base64,${fallbackBuffer.toString('base64')}`;
+        }
     } catch (error) {
         console.error('Error generating thumbnail:', error);
         throw new Error(`Failed to generate thumbnail: ${error instanceof Error ? error.message : 'Unknown error'}`);
