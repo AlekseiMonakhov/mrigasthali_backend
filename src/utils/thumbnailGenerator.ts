@@ -1,8 +1,6 @@
 import sharp from 'sharp';
 import fs from 'fs/promises';
-import pdf from 'pdf-parse';
-import { PDFDocument } from 'pdf-lib';
-import * as console from "node:console";
+import { fromPath } from 'pdf2pic';
 
 interface ThumbnailOptions {
     width?: number;
@@ -48,31 +46,35 @@ export async function generateBookThumbnails(
     }
 
     try {
-        // Читаем PDF файл
-        const pdfBuffer = await fs.readFile(pdfPath);
-        
-        // Загружаем PDF документ
-        const pdfDoc = await PDFDocument.load(pdfBuffer);
-        
-        // Получаем первую страницу
-        const pages = pdfDoc.getPages();
-        if (pages.length === 0) {
-            throw new Error('PDF has no pages');
-        }
-        
-        const firstPage = pages[0];
-        
-        // Конвертируем страницу в PNG
-        const pngImage = await firstPage.exportAsImage({
+        const baseOptions = {
             width,
-            height
-        });
+            height,
+            density: 300,
+            format: "png",
+            preserveAspectRatio: true,
+            saveFilePath: await fs.mkdtemp('tmp-'), // Временная директория для сохранения
+        };
+
+        // Конвертируем первую страницу PDF в изображение
+        const convert = fromPath(pdfPath, baseOptions);
+        const pageToConvertAsImage = 1;
         
-        // Получаем буфер изображения
-        const pngBuffer = await pngImage.toBuffer();
+        const result = await convert(pageToConvertAsImage);
+        
+        if (!result.path) {
+            throw new Error('Failed to convert PDF to image');
+        }
+
+        // Читаем сгенерированный файл
+        const imageBuffer = await fs.readFile(result.path);
+
+        // Удаляем временный файл
+        await fs.unlink(result.path);
+        // Удаляем временную директорию
+        await fs.rmdir(baseOptions.saveFilePath);
 
         // Оптимизируем с помощью sharp
-        const optimizedBuffer = await sharp(pngBuffer)
+        const optimizedBuffer = await sharp(imageBuffer)
             .resize(width, height, {
                 fit: 'contain',
                 background: { r: 255, g: 255, b: 255, alpha: 1 }
