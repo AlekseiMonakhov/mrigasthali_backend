@@ -3,6 +3,7 @@ import { createCanvas } from 'canvas';
 import fs from 'fs/promises';
 import path from 'path';
 import { STORAGE_PATH } from './fileUtils';
+import pdf from 'pdf-parse';
 
 interface ThumbnailOptions {
     width?: number;
@@ -48,16 +49,27 @@ export async function generateBookThumbnails(
     }
 
     try {
+        // Читаем PDF файл
+        const dataBuffer = await fs.readFile(pdfPath);
+        
         // Создаем canvas для рендеринга
-        const canvas = createCanvas(width * 2, height * 2);
+        const canvas = createCanvas(width, height);
         const ctx = canvas.getContext('2d');
+        
+        // Заполняем белым фоном
         ctx.fillStyle = 'white';
-        ctx.fillRect(0, 0, width * 2, height * 2);
+        ctx.fillRect(0, 0, width, height);
+        
+        // Добавляем текст с названием PDF
+        ctx.fillStyle = 'black';
+        ctx.font = '16px Arial';
+        const fileName = pdfPath.split('/').pop() || 'Unknown';
+        ctx.fillText(fileName, 10, height / 2);
 
-        // Конвертируем в изображение
+        // Конвертируем canvas в buffer
         const buffer = canvas.toBuffer('image/jpeg');
 
-        // Оптимизируем изображение и получаем буфер
+        // Оптимизируем с помощью sharp
         const optimizedBuffer = await sharp(buffer)
             .resize(width, height, {
                 fit: 'contain',
@@ -66,16 +78,11 @@ export async function generateBookThumbnails(
             .jpeg({ quality })
             .toBuffer();
 
-        // Конвертируем в base64
+        // Возвращаем base64
         return `data:image/jpeg;base64,${optimizedBuffer.toString('base64')}`;
-    } catch (maybeError: unknown) {
-        const error = toErrorWithMessage(maybeError);
-        console.error('Error generating thumbnail:', {
-            message: error.message,
-            pdfPath,
-            stack: error.stack
-        });
-        throw new Error(`Failed to generate thumbnail: ${error.message}`);
+    } catch (error) {
+        console.error('Error generating thumbnail:', error);
+        throw new Error('Failed to generate thumbnail');
     }
 }
 
