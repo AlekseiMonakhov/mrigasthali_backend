@@ -1,9 +1,7 @@
 import sharp from 'sharp';
-import { createCanvas } from 'canvas';
 import fs from 'fs/promises';
-import path from 'path';
-import { STORAGE_PATH } from './fileUtils';
 import pdf from 'pdf-parse';
+import { PDFDocument } from 'pdf-lib';
 import * as console from "node:console";
 
 interface ThumbnailOptions {
@@ -51,27 +49,30 @@ export async function generateBookThumbnails(
 
     try {
         // Читаем PDF файл
-        const dataBuffer = await fs.readFile(pdfPath);
+        const pdfBuffer = await fs.readFile(pdfPath);
         
-        // Создаем canvas для рендеринга
-        const canvas = createCanvas(width, height);
-        const ctx = canvas.getContext('2d');
+        // Загружаем PDF документ
+        const pdfDoc = await PDFDocument.load(pdfBuffer);
         
-        // Заполняем белым фоном
-        ctx.fillStyle = 'white';
-        ctx.fillRect(0, 0, width, height);
+        // Получаем первую страницу
+        const pages = pdfDoc.getPages();
+        if (pages.length === 0) {
+            throw new Error('PDF has no pages');
+        }
         
-        // Добавляем текст с названием PDF
-        ctx.fillStyle = 'black';
-        ctx.font = '16px Arial';
-        const fileName = pdfPath.split('/').pop() || 'Unknown';
-        ctx.fillText(fileName, 10, height / 2);
-
-        // Конвертируем canvas в buffer
-        const buffer = canvas.toBuffer('image/jpeg');
+        const firstPage = pages[0];
+        
+        // Конвертируем страницу в PNG
+        const pngImage = await firstPage.exportAsImage({
+            width,
+            height
+        });
+        
+        // Получаем буфер изображения
+        const pngBuffer = await pngImage.toBuffer();
 
         // Оптимизируем с помощью sharp
-        const optimizedBuffer = await sharp(buffer)
+        const optimizedBuffer = await sharp(pngBuffer)
             .resize(width, height, {
                 fit: 'contain',
                 background: { r: 255, g: 255, b: 255, alpha: 1 }
@@ -81,7 +82,6 @@ export async function generateBookThumbnails(
 
         // Возвращаем base64
         return `data:image/jpeg;base64,${optimizedBuffer.toString('base64')}`;
-        console.log("return base64")
     } catch (error) {
         console.error('Error generating thumbnail:', error);
         throw new Error('Failed to generate thumbnail');
